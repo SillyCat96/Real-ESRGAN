@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Real-ESRGAN pipeline (v9)
+# Real-ESRGAN pipeline (v10)
 #
 # Использование:
 #   ./run.sh                  # полный pipeline
@@ -11,7 +11,6 @@
 # ============================================================
 
 IMAGE_NAME="real-esrgan-cpu"
-# BASH_SOURCE — путь к самому скрипту, работает при любом способе запуска
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARK_DIR="$SCRIPT_DIR/benchmark"
 PICTURES_DIR="$SCRIPT_DIR/pictures"
@@ -30,34 +29,41 @@ for arg in "$@"; do
     --regen)      REGEN=true ;;
     --scale=*)    SCALE="${arg#*=}" ;;
     *)
-      if [ "$PREV_ARG" = "--scale" ]; then
-        SCALE="$arg"
-      else
-        INPUT_ARG="$arg"
-      fi
-      ;;
+      if [ "$PREV_ARG" = "--scale" ]; then SCALE="$arg"
+      else INPUT_ARG="$arg"
+      fi ;;
   esac
   PREV_ARG="$arg"
 done
 
-# --- Безопасное создание папки (лечим артефакт git) ----------
+# --- Безопасное создание папки -------------------------------
+# Если git случайно создал файл вместо папки — исправляем
 safe_mkdir() {
   local dir="$1"
   if [ -f "$dir" ]; then
-    echo "  ⚠️  '$dir' оказался файлом — удаляю, создаю папку..."
+    echo "  ⚠️  '$dir' — файл вместо папки, исправляю..."
     rm -f "$dir"
   fi
   mkdir -p "$dir"
 }
 
-# --- Конвертация пути для docker -v на Windows ---------------
+# --- Конвертация пути для docker -v --------------------------
+# Git Bash на Windows даёт пути вида /mnt/e/... или /e/...
+# Docker Desktop на Windows требует e:/...
+# Linux/Mac оставляем как есть
 to_docker_path() {
   local p="$1"
-  if echo "$p" | grep -qE '^[A-Za-z]:[/\\]'; then
-    echo "$p" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|'
-  elif echo "$p" | grep -qE '^/mnt/[a-z]/'; then
-    echo "$p" | sed 's|^/mnt/\([a-z]\)/|/\1/|'
+  # /mnt/e/foo  →  e:/foo   (Git Bash + WSL стиль)
+  if echo "$p" | grep -qE '^/mnt/[a-zA-Z]/'; then
+    echo "$p" | sed 's|^/mnt/\([a-zA-Z]\)/|\1:/|'
+  # /e/foo  →  e:/foo   (MSYS2 / Git Bash стиль)
+  elif echo "$p" | grep -qE '^/[a-zA-Z]/'; then
+    echo "$p" | sed 's|^/\([a-zA-Z]\)/|\1:/|'
+  # C:\foo или C:/foo  →  оставляем, заменяем \ на /
+  elif echo "$p" | grep -qE '^[a-zA-Z]:[/\\]'; then
+    echo "$p" | sed 's|\\|/|g'
   else
+    # Linux / Mac — путь уже правильный
     echo "$p"
   fi
 }
@@ -72,7 +78,6 @@ fi
 
 # ============================================================
 # ШАГ 1 — Генерация LR
-# Скрипт передаём через stdin — никаких проблем с монтированием
 # ============================================================
 DEFAULT_MODE=false
 
@@ -99,10 +104,16 @@ if [ -z "$INPUT_ARG" ]; then
     echo "  ♻️  --regen: pictures/ очищена"
   fi
 
-  # Передаём make_lr.py через stdin — работает на любой ОС
+  DOCKER_BENCHMARK="$(to_docker_path "$BENCHMARK_DIR")"
+  DOCKER_PICTURES="$(to_docker_path "$PICTURES_DIR")"
+
+  echo "  [debug] benchmark → $DOCKER_BENCHMARK"
+  echo "  [debug] pictures  → $DOCKER_PICTURES"
+  echo ""
+
   docker run --rm -i \
-    -v "$(to_docker_path "$BENCHMARK_DIR"):/benchmark:ro" \
-    -v "$(to_docker_path "$PICTURES_DIR"):/pictures" \
+    -v "${DOCKER_BENCHMARK}:/benchmark:ro" \
+    -v "${DOCKER_PICTURES}:/pictures" \
     --entrypoint python3 \
     "$IMAGE_NAME" - \
     --benchmark /benchmark \
@@ -138,25 +149,29 @@ fi
 
 safe_mkdir "$RESULTS_DIR"
 
+DOCKER_RESULTS="$(to_docker_path "$RESULTS_DIR")"
+
 if [ -f "$INPUT_ABS" ]; then
   INPUT_DIR="$(dirname "$INPUT_ABS")"
   INPUT_FILE="$(basename "$INPUT_ABS")"
+  DOCKER_INPUT="$(to_docker_path "$INPUT_DIR")"
   echo "🖼  Апскейлим: $INPUT_FILE"
   echo "📁 Результат: $RESULTS_DIR/"
   echo ""
   docker run --rm \
-    -v "$(to_docker_path "$INPUT_DIR"):/input:ro" \
-    -v "$(to_docker_path "$RESULTS_DIR"):/output" \
+    -v "${DOCKER_INPUT}:/input:ro" \
+    -v "${DOCKER_RESULTS}:/output" \
     "$IMAGE_NAME" \
     -i "/input/$INPUT_FILE" \
     2>&1 | grep -v "UserWarning\|functional_tensor\|warn\|removed in 0.17\|transforms.functional or"
 else
+  DOCKER_INPUT="$(to_docker_path "$INPUT_ABS")"
   echo "📂 Апскейлим папку: $INPUT_ABS"
   echo "📁 Результат: $RESULTS_DIR/"
   echo ""
   docker run --rm \
-    -v "$(to_docker_path "$INPUT_ABS"):/input:ro" \
-    -v "$(to_docker_path "$RESULTS_DIR"):/output" \
+    -v "${DOCKER_INPUT}:/input:ro" \
+    -v "${DOCKER_RESULTS}:/output" \
     "$IMAGE_NAME" \
     2>&1 | grep -v "UserWarning\|functional_tensor\|warn\|removed in 0.17\|transforms.functional or"
 fi
@@ -165,7 +180,7 @@ echo ""
 echo "✅ Апскейл завершён!"
 
 # ============================================================
-# ШАГ 3 — Метрики (тоже через stdin)
+# ШАГ 3 — Метрики
 # ============================================================
 if [ "$RUN_METRICS" = true ]; then
   if [ ! -d "$BENCHMARK_DIR" ]; then
@@ -182,9 +197,12 @@ if [ "$RUN_METRICS" = true ]; then
     fi
     echo ""
 
+    DOCKER_RESULTS_M="$(to_docker_path "$RESULTS_DIR")"
+    DOCKER_BENCHMARK_M="$(to_docker_path "$BENCHMARK_DIR")"
+
     docker run --rm -i \
-      -v "$(to_docker_path "$RESULTS_DIR"):/results:ro" \
-      -v "$(to_docker_path "$BENCHMARK_DIR"):/benchmark:ro" \
+      -v "${DOCKER_RESULTS_M}:/results:ro" \
+      -v "${DOCKER_BENCHMARK_M}:/benchmark:ro" \
       --entrypoint python3 \
       "$IMAGE_NAME" - \
       --results   /results \
