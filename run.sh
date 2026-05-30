@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Real-ESRGAN pipeline (v7):
+# Real-ESRGAN pipeline:
 #   1. benchmark/ -> make_lr.py -> pictures/   (внутри Docker)
 #   2. pictures/  -> Real-ESRGAN -> results/   (внутри Docker)
 #   3. results/ vs benchmark/ -> metrics.py    (внутри Docker)
