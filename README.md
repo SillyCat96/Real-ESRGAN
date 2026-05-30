@@ -9,7 +9,6 @@ Dockerized pipeline для апскейла изображений с помощ
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / Mac / Linux)
 - Git
-- **Больше ничего** — Python, PyTorch и все зависимости устанавливаются внутри контейнера
 
 ---
 
