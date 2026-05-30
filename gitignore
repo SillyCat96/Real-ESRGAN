@@ -1,0 +1,14 @@
+# Генерируемые папки — не коммитим содержимое
+pictures/*
+results*/
+# Но сохраняем сами папки через .gitkeep
+!pictures/.gitkeep
+!results/.gitkeep
+
+# Веса моделей (большие файлы)
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
