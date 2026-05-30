@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Real-ESRGAN pipeline (v8):
-#   1. benchmark/ -> make_lr.py -> pictures/
-#   2. pictures/  -> Real-ESRGAN -> results/
-#   3. results/ vs benchmark/ -> metrics.py
+# Real-ESRGAN pipeline (v9)
 #
 # Использование:
 #   ./run.sh                  # полный pipeline
@@ -13,10 +10,8 @@
 #   ./run.sh photo.jpg        # один файл + метрики
 # ============================================================
 
-# Не используем set -e — обрабатываем ошибки явно
 IMAGE_NAME="real-esrgan-cpu"
-# SCRIPT_DIR всегда указывает на папку со скриптом,
-# независимо от того откуда запущен bash
+# BASH_SOURCE — путь к самому скрипту, работает при любом способе запуска
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARK_DIR="$SCRIPT_DIR/benchmark"
 PICTURES_DIR="$SCRIPT_DIR/pictures"
@@ -45,24 +40,21 @@ for arg in "$@"; do
   PREV_ARG="$arg"
 done
 
-# --- Хелпер: безопасно создать папку ------------------------
-# Если вдруг на месте папки лежит файл (артефакт git) — удаляем его
+# --- Безопасное создание папки (лечим артефакт git) ----------
 safe_mkdir() {
   local dir="$1"
   if [ -f "$dir" ]; then
-    echo "  ⚠️  '$dir' — это файл, удаляю и создаю папку..."
+    echo "  ⚠️  '$dir' оказался файлом — удаляю, создаю папку..."
     rm -f "$dir"
   fi
   mkdir -p "$dir"
 }
 
-# --- Хелпер: конвертация пути для docker -v на Windows ------
+# --- Конвертация пути для docker -v на Windows ---------------
 to_docker_path() {
   local p="$1"
-  # Windows-путь C:\... или C:/...
   if echo "$p" | grep -qE '^[A-Za-z]:[/\\]'; then
     echo "$p" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|'
-  # WSL-путь /mnt/c/...
   elif echo "$p" | grep -qE '^/mnt/[a-z]/'; then
     echo "$p" | sed 's|^/mnt/\([a-z]\)/|/\1/|'
   else
@@ -73,16 +65,14 @@ to_docker_path() {
 # --- Сборка образа -------------------------------------------
 if ! docker image inspect "$IMAGE_NAME" > /dev/null 2>&1; then
   echo "🔨 Собираем Docker-образ (первый раз ~5-10 минут)..."
-  docker build -t "$IMAGE_NAME" "$SCRIPT_DIR" || {
-    echo "❌ Ошибка сборки образа"
-    exit 1
-  }
+  docker build -t "$IMAGE_NAME" "$SCRIPT_DIR" || { echo "❌ Ошибка сборки"; exit 1; }
 else
   echo "✅ Образ '$IMAGE_NAME' уже есть."
 fi
 
 # ============================================================
 # ШАГ 1 — Генерация LR
+# Скрипт передаём через stdin — никаких проблем с монтированием
 # ============================================================
 DEFAULT_MODE=false
 
@@ -92,7 +82,7 @@ if [ -z "$INPUT_ARG" ]; then
   if [ ! -d "$BENCHMARK_DIR" ]; then
     echo ""
     echo "❌ Папка benchmark/ не найдена: $BENCHMARK_DIR"
-    echo "   Положи HR-картинки (Set14 и т.п.) в папку benchmark/"
+    echo "   Положи HR-картинки в папку benchmark/ и запусти снова."
     exit 1
   fi
 
@@ -106,22 +96,20 @@ if [ -z "$INPUT_ARG" ]; then
 
   if [ "$REGEN" = true ]; then
     rm -rf "${PICTURES_DIR:?}"/*
-    echo "  ♻️  --regen: папка pictures/ очищена"
+    echo "  ♻️  --regen: pictures/ очищена"
   fi
 
-  docker run --rm \
+  # Передаём make_lr.py через stdin — работает на любой ОС
+  docker run --rm -i \
     -v "$(to_docker_path "$BENCHMARK_DIR"):/benchmark:ro" \
     -v "$(to_docker_path "$PICTURES_DIR"):/pictures" \
-    -v "$(to_docker_path "$SCRIPT_DIR/make_lr.py"):/make_lr.py:ro" \
     --entrypoint python3 \
-    "$IMAGE_NAME" \
-    /make_lr.py \
+    "$IMAGE_NAME" - \
     --benchmark /benchmark \
     --pictures  /pictures \
-    --scale     "$SCALE" || {
-      echo "❌ Ошибка при генерации LR"
-      exit 1
-    }
+    --scale     "$SCALE" \
+    < "$SCRIPT_DIR/make_lr.py" \
+    || { echo "❌ Ошибка при генерации LR"; exit 1; }
 
   INPUT_ARG="$PICTURES_DIR"
 fi
@@ -137,16 +125,14 @@ if [ "$DEFAULT_MODE" = true ]; then
 fi
 echo ""
 
-# Резолвим INPUT_ABS — всегда абсолютный путь
 if [ -f "$INPUT_ARG" ] || [ -d "$INPUT_ARG" ]; then
   INPUT_ABS="$(cd "$(dirname "$INPUT_ARG")" && pwd)/$(basename "$INPUT_ARG")"
 else
-  # Путь мог быть абсолютным сразу
   INPUT_ABS="$INPUT_ARG"
 fi
 
 if [ ! -e "$INPUT_ABS" ]; then
-  echo "❌ Файл или папка не найдена: $INPUT_ABS"
+  echo "❌ Не найдено: $INPUT_ABS"
   exit 1
 fi
 
@@ -158,7 +144,6 @@ if [ -f "$INPUT_ABS" ]; then
   echo "🖼  Апскейлим: $INPUT_FILE"
   echo "📁 Результат: $RESULTS_DIR/"
   echo ""
-
   docker run --rm \
     -v "$(to_docker_path "$INPUT_DIR"):/input:ro" \
     -v "$(to_docker_path "$RESULTS_DIR"):/output" \
@@ -169,7 +154,6 @@ else
   echo "📂 Апскейлим папку: $INPUT_ABS"
   echo "📁 Результат: $RESULTS_DIR/"
   echo ""
-
   docker run --rm \
     -v "$(to_docker_path "$INPUT_ABS"):/input:ro" \
     -v "$(to_docker_path "$RESULTS_DIR"):/output" \
@@ -181,12 +165,12 @@ echo ""
 echo "✅ Апскейл завершён!"
 
 # ============================================================
-# ШАГ 3 — Метрики
+# ШАГ 3 — Метрики (тоже через stdin)
 # ============================================================
 if [ "$RUN_METRICS" = true ]; then
   if [ ! -d "$BENCHMARK_DIR" ]; then
     echo ""
-    echo "ℹ️  Папка benchmark/ не найдена — метрики пропущены."
+    echo "ℹ️  benchmark/ не найдена — метрики пропущены."
   else
     echo ""
     if [ "$DEFAULT_MODE" = true ]; then
@@ -194,18 +178,17 @@ if [ "$RUN_METRICS" = true ]; then
       echo "  ШАГ 3/3 — Метрики качества (PSNR / SSIM)"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     else
-      echo "📊 Считаем метрики качества (PSNR / SSIM)..."
+      echo "📊 Считаем метрики (PSNR / SSIM)..."
     fi
     echo ""
 
-    docker run --rm \
+    docker run --rm -i \
       -v "$(to_docker_path "$RESULTS_DIR"):/results:ro" \
       -v "$(to_docker_path "$BENCHMARK_DIR"):/benchmark:ro" \
-      -v "$(to_docker_path "$SCRIPT_DIR/metrics.py"):/metrics.py:ro" \
       --entrypoint python3 \
-      "$IMAGE_NAME" \
-      /metrics.py \
+      "$IMAGE_NAME" - \
       --results   /results \
-      --benchmark /benchmark
+      --benchmark /benchmark \
+      < "$SCRIPT_DIR/metrics.py"
   fi
 fi
