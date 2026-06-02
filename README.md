@@ -3,6 +3,8 @@
 Dockerized pipeline для апскейла изображений с помощью [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (×4, CPU).  
 Автоматически генерирует LR-версии из эталонов, апскейлит их и считает метрики качества (PSNR / SSIM).
 
+Мой телеграм: @SillyCat96
+
 ---
 
 ## Требования
