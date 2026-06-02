@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-# Real-ESRGAN pipeline (v7):
-#   1. benchmark/ -> make_lr.py -> pictures/   (внутри Docker)
-#   2. pictures/  -> Real-ESRGAN -> results/   (внутри Docker)
-#   3. results/ vs benchmark/ -> metrics.py    (внутри Docker)
+# Real-ESRGAN pipeline
+#   1. benchmark/ -> make_lr.py -> pictures/  
+#   2. pictures/  -> Real-ESRGAN -> results/  
+#   3. results/ vs benchmark/ -> metrics.py    
 #
 # Использование:
 #   ./run.sh                  # полный pipeline
@@ -53,7 +53,7 @@ else
 fi
 
 # ============================================================
-# ШАГ 1 — Генерация LR (монтируем локальный make_lr.py)
+# ШАГ 1 — Генерация LR 
 # ============================================================
 DEFAULT_MODE=false
 
@@ -95,7 +95,7 @@ if [ -z "$INPUT_ARG" ]; then
 fi
 
 # ============================================================
-# ШАГ 2 — Апскейл (без переопределения ENTRYPOINT)
+# ШАГ 2 — Апскейл
 # ============================================================
 echo ""
 if [ "$DEFAULT_MODE" = true ]; then
@@ -147,7 +147,7 @@ echo ""
 echo "✅ Апскейл завершён!"
 
 # ============================================================
-# ШАГ 3 — Метрики (монтируем локальный metrics.py)
+# ШАГ 3 — Метрики 
 # ============================================================
 if [ "$RUN_METRICS" = true ]; then
   if [ ! -d "$BENCHMARK_DIR" ]; then
