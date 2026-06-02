@@ -7,8 +7,13 @@
   results/baboon_out.png  <->  benchmark/baboon.png
   results/photo_out.png   <->  benchmark/photo.png
 
+Дополнительно, если есть папка reference/ с заранее заготовленными
+апскейленными картинками:
+  results/baboon_out.png  <->  reference/baboon_out.png
+
 Использование:
   python metrics.py --results results/ --benchmark benchmark/
+  python metrics.py --results results/ --benchmark benchmark/ --reference reference/
 """
 
 import argparse
@@ -34,25 +39,26 @@ except ImportError:
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
 
 
-def find_benchmark_match(result_path: Path, benchmark_dir: Path) -> Path | None:
+def find_benchmark_match(result_path: Path, ref_dir: Path,
+                         strip_out: bool = True) -> Path | None:
     """
-    Ищет эталон для result-файла.
-    Real-ESRGAN добавляет суффикс _out к имени, убираем его.
-    Примеры:
+    Ищет эталон для result-файла в указанной папке.
+
+    strip_out=True  (benchmark/): срезаем _out, ищем оригинал
       baboon_out.png  -> baboon.png
-      photo_out.png   -> photo.png
-      img.png         -> img.png  (если суффикса нет)
+
+    strip_out=False (reference/): файлы уже называются с _out, ищем как есть
+      baboon_out.png  -> baboon_out.png
     """
     stem = result_path.stem
-    # убираем суффикс _out если есть
-    if stem.endswith("_out"):
+
+    if strip_out and stem.endswith("_out"):
         base_stem = stem[:-4]
     else:
         base_stem = stem
 
-    # ищем файл с тем же именем в любом поддерживаемом расширении
     for ext in IMG_EXTS:
-        candidate = benchmark_dir / f"{base_stem}{ext}"
+        candidate = ref_dir / f"{base_stem}{ext}"
         if candidate.exists():
             return candidate
     return None
@@ -85,33 +91,25 @@ def compute_metrics(result_img: np.ndarray,
     return psnr_val, ssim_val
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="PSNR / SSIM: results vs benchmark"
-    )
-    parser.add_argument("--results",   default="results",   help="Папка с апскейленными картинками")
-    parser.add_argument("--benchmark", default="benchmark", help="Папка с эталонными картинками")
-    args = parser.parse_args()
+def run_comparison(results_dir: Path, ref_dir: Path, label: str,
+                   strip_out: bool = True) -> None:
+    """
+    Универсальный блок сравнения: results/ vs любая папка с эталонами.
 
-    results_dir   = Path(args.results)
-    benchmark_dir = Path(args.benchmark)
-
-    if not results_dir.exists():
-        print(f"❌ Папка results не найдена: {results_dir.resolve()}")
-        sys.exit(1)
-    if not benchmark_dir.exists():
-        print(f"❌ Папка benchmark не найдена: {benchmark_dir.resolve()}")
-        sys.exit(1)
-
+    strip_out=True  — для benchmark/ (оригиналы без _out)
+    strip_out=False — для reference/ (уже апскейленные, имена с _out)
+    """
     result_files = sorted(
         p for p in results_dir.iterdir() if p.suffix.lower() in IMG_EXTS
     )
 
     if not result_files:
         print(f"❌ В папке {results_dir} нет картинок")
-        sys.exit(1)
+        return
 
     print()
+    print("=" * 62)
+    print(f"  results/  vs  {label}/")
     print("=" * 62)
     print(f"  {'Файл':<28}  {'PSNR (dB)':>10}  {'SSIM':>8}")
     print("=" * 62)
@@ -120,15 +118,15 @@ def main():
     skipped = []
 
     for result_path in result_files:
-        bench_path = find_benchmark_match(result_path, benchmark_dir)
-        if bench_path is None:
+        ref_path = find_benchmark_match(result_path, ref_dir, strip_out=strip_out)
+        if ref_path is None:
             skipped.append(result_path.name)
             continue
 
         try:
-            result_img    = load_image(result_path)
-            benchmark_img = load_image(bench_path)
-            psnr_val, ssim_val = compute_metrics(result_img, benchmark_img)
+            result_img = load_image(result_path)
+            ref_img    = load_image(ref_path)
+            psnr_val, ssim_val = compute_metrics(result_img, ref_img)
 
             psnr_vals.append(psnr_val)
             ssim_vals.append(ssim_val)
@@ -149,7 +147,6 @@ def main():
         print(f"  {'Среднее':<28}  {avg_psnr:>10.2f}  {avg_ssim:>8.4f}")
         print("=" * 62)
 
-        # Интерпретация качества
         print()
         if avg_psnr >= 40:
             quality = "🟢 Отличное (практически без потерь)"
@@ -163,13 +160,48 @@ def main():
 
     if skipped:
         print()
-        print("  ⚠️  Эталон не найден для:")
+        print(f"  ⚠️  Эталон не найден в {label}/ для:")
         for name in skipped:
             print(f"     - {name}")
-        print("  Убедись что в benchmark/ есть файлы с такими же именами")
-        print("  (без суффикса _out)")
+        print(f"  Убедись что в {label}/ есть файлы с такими же именами")
+        if strip_out:
+            print("  (без суффикса _out)")
+        else:
+            print("  (с суффиксом _out — как в results/)")
 
     print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="PSNR / SSIM: results vs benchmark  [+ results vs reference]"
+    )
+    parser.add_argument("--results",   default="results",   help="Папка с апскейленными картинками")
+    parser.add_argument("--benchmark", default="benchmark", help="Папка с оригинальными HR-картинками")
+    parser.add_argument("--reference", default=None,
+                        help="Папка с заранее заготовленными результатами для сравнения (опционально)")
+    args = parser.parse_args()
+
+    results_dir   = Path(args.results)
+    benchmark_dir = Path(args.benchmark)
+
+    if not results_dir.exists():
+        print(f"❌ Папка results не найдена: {results_dir.resolve()}")
+        sys.exit(1)
+    if not benchmark_dir.exists():
+        print(f"❌ Папка benchmark не найдена: {benchmark_dir.resolve()}")
+        sys.exit(1)
+
+    # --- Блок 1: results vs benchmark (strip_out=True — оригиналы без _out) ---
+    run_comparison(results_dir, benchmark_dir, "benchmark", strip_out=True)
+
+    # --- Блок 2: results vs reference (strip_out=False — файлы уже с _out) ---
+    reference_dir = Path(args.reference) if args.reference else Path("reference")
+    if reference_dir.exists():
+        run_comparison(results_dir, reference_dir, "reference", strip_out=False)
+    elif args.reference:
+        print(f"⚠️  Папка reference не найдена: {reference_dir.resolve()} — сравнение пропущено.")
+        print()
 
 
 if __name__ == "__main__":

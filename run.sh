@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Real-ESRGAN pipeline:
+# Real-ESRGAN pipeline (v7):
 #   1. benchmark/ -> make_lr.py -> pictures/   (внутри Docker)
 #   2. pictures/  -> Real-ESRGAN -> results/   (внутри Docker)
 #   3. results/ vs benchmark/ -> metrics.py    (внутри Docker)
@@ -164,14 +164,24 @@ if [ "$RUN_METRICS" = true ]; then
     fi
     echo ""
 
+    REFERENCE_DIR="$SCRIPT_DIR/reference"
+    REFERENCE_MOUNT=""
+    REFERENCE_ARG=""
+    if [ -d "$REFERENCE_DIR" ]; then
+      REFERENCE_MOUNT="-v $(pwd)/reference:/reference:ro"
+      REFERENCE_ARG="--reference /reference"
+    fi
+
     docker run --rm \
       -v "$(pwd)/results:/results:ro" \
       -v "$(pwd)/benchmark:/benchmark:ro" \
       -v "$(pwd)/metrics.py:/metrics.py:ro" \
+      $REFERENCE_MOUNT \
       --entrypoint python3 \
       "$IMAGE_NAME" \
       /metrics.py \
       --results /results \
-      --benchmark /benchmark
+      --benchmark /benchmark \
+      $REFERENCE_ARG
   fi
 fi
